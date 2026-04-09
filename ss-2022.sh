@@ -556,7 +556,7 @@ set_method() {
     echo -e "请选择 Shadowsocks Rust 加密方式
 ==================================	
  ${Green_font_prefix} 1.${Font_color_suffix} aes-128-gcm
- ${Green_font_prefix} 2.${Font_color_suffix} aes-256-gcm
+ ${Green_font_prefix} 2.${Font_color_suffix} aes-256-gcm ${Green_font_prefix}(默认)${Font_color_suffix}
  ${Green_font_prefix} 3.${Font_color_suffix} chacha20-ietf-poly1305
  ${Green_font_prefix} 4.${Font_color_suffix} plain
  ${Green_font_prefix} 5.${Font_color_suffix} none
@@ -570,14 +570,14 @@ set_method() {
 ==================================
  ${Tip} AEAD 2022 加密（使用随机加密）
 ==================================	
- ${Green_font_prefix}13.${Font_color_suffix} 2022-blake3-aes-128-gcm ${Green_font_prefix}(默认)${Font_color_suffix}
+ ${Green_font_prefix}13.${Font_color_suffix} 2022-blake3-aes-128-gcm
  ${Green_font_prefix}14.${Font_color_suffix} 2022-blake3-aes-256-gcm ${Green_font_prefix}(推荐)${Font_color_suffix}
  ${Green_font_prefix}15.${Font_color_suffix} 2022-blake3-chacha20-poly1305
  ${Green_font_prefix}16.${Font_color_suffix} 2022-blake3-chacha8-poly1305
 =================================="
     
-    read -e -p "(默认: 13. 2022-blake3-aes-128-gcm)：" method_choice
-    [[ -z "${method_choice}" ]] && method_choice="13"
+    read -e -p "(默认: 2. aes-256-gcm)：" method_choice
+    [[ -z "${method_choice}" ]] && method_choice="2"
     
     case ${method_choice} in
         1) SS_METHOD="aes-128-gcm" ;;
@@ -596,7 +596,7 @@ set_method() {
         14) SS_METHOD="2022-blake3-aes-256-gcm" ;;
         15) SS_METHOD="2022-blake3-chacha20-poly1305" ;;
         16) SS_METHOD="2022-blake3-chacha8-poly1305" ;;
-        *) SS_METHOD="2022-blake3-aes-128-gcm" ;;
+        *) SS_METHOD="aes-256-gcm" ;;
     esac
     
     echo && echo "=================================="
