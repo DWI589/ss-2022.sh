@@ -117,7 +117,3 @@ wget -N --no-check-certificate https://raw.githubusercontent.com/DWI589/ss-2022.
 - 初始发布
 - 支持 Shadowsocks Rust 基本功能
 
-## 作者信息
-
-- 作者：jinqians
-- 网站：https://jinqians.com
