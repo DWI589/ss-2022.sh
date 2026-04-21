@@ -448,13 +448,17 @@ check_firewall() {
         iptables -I INPUT -p udp --dport ${port} -j ACCEPT
         echo -e "${SUCCESS} iptables 端口开放完成！"
         
-        # 保存 iptables 规则
+    # 保存 iptables 规则
         if [[ ${OS_TYPE} == "centos" ]]; then
-            service iptables save
+            # 修复 CentOS7+ 中 service iptables save 报错的问题
+            if [[ -d "/etc/sysconfig" ]]; then
+                iptables-save > /etc/sysconfig/iptables
+            else
+                iptables-save > /etc/iptables.rules
+            fi
         else
             iptables-save > /etc/iptables.rules
         fi
-    fi
 }
 
 # 生成随机端口
