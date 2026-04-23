@@ -305,8 +305,7 @@ install_service() {
     cat > /etc/systemd/system/ss-rust.service << EOF
 [Unit]
 Description=Shadowsocks Rust Service
-After=network-online.target
-Wants=network-online.target systemd-networkd-wait-online.service
+After=network.target
 
 [Service]
 Type=simple
@@ -322,25 +321,36 @@ EOF
 
     echo -e "${INFO} 重新加载 systemd 配置..."
     systemctl daemon-reload
+    
     echo -e "${INFO} 启用 ss-rust 服务..."
     systemctl enable ss-rust
+    
     echo -e "${SUCCESS} Shadowsocks Rust 服务配置完成！"
 }
 
 # 安装依赖
 install_dependencies() {
     echo -e "${INFO} 开始安装系统依赖..."
+    
     if [[ ${OS_TYPE} == "centos" ]]; then
         yum update -y
-        yum install -y jq gzip wget curl unzip xz openssl qrencode tar
+        # 新增: 安装 iptables-services 并设置开机自启
+        yum install -y jq gzip wget curl unzip xz openssl qrencode tar iptables-services
+        systemctl enable iptables >/dev/null 2>&1
     else
         apt-get update
-        apt-get install -y jq gzip wget curl unzip xz-utils openssl qrencode tar
+        # 新增: 加上 DEBIAN_FRONTEND=noninteractive 防止安装弹窗卡住脚本，并安装持久化插件
+        DEBIAN_FRONTEND=noninteractive apt-get install -y jq gzip wget curl unzip xz-utils openssl qrencode tar iptables-persistent netfilter-persistent
+        systemctl enable netfilter-persistent >/dev/null 2>&1
     fi
     
+    # 设置时区
+    echo -e "${CYAN}正在设置时区...${RESET}"
     if [ -f "/usr/share/zoneinfo/Asia/Shanghai" ]; then
         ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
         echo "Asia/Shanghai" > /etc/timezone
+    else
+        echo -e "${RED}时区文件不存在，跳过设置${RESET}"
     fi
     echo -e "${SUCCESS} 系统依赖安装完成！"
 }
@@ -379,26 +389,44 @@ check_firewall() {
     local port=$1
     echo -e "${INFO} 检查防火墙配置..."
     
+    # 1. 检查并配置 firewalld (CentOS/Alma/Rocky 默认)
+    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+        echo -e "${INFO} 检测到 firewalld 防火墙..."
+        firewall-cmd --permanent --add-port=${port}/tcp >/dev/null 2>&1
+        firewall-cmd --permanent --add-port=${port}/udp >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+        echo -e "${SUCCESS} firewalld 端口开放并持久化完成！"
+        return 0
+    fi
+
+    # 2. 检查并配置 UFW (Ubuntu/Debian 默认)
     if command -v ufw >/dev/null 2>&1; then
         if ufw status | grep -qw active; then
-            ufw allow ${port}/tcp
-            ufw allow ${port}/udp
+            echo -e "${INFO} 检测到 UFW 防火墙..."
+            ufw allow ${port}/tcp >/dev/null 2>&1
+            ufw allow ${port}/udp >/dev/null 2>&1
+            echo -e "${SUCCESS} UFW 端口开放完成！(UFW自动持久化)"
+            return 0
         fi
     fi
     
+    # 3. 检查并配置 iptables (备用方案)
     if command -v iptables >/dev/null 2>&1; then
+        echo -e "${INFO} 检测到 iptables 防火墙..."
         iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
         iptables -I INPUT -p udp --dport ${port} -j ACCEPT
         
-        if [[ ${OS_TYPE} == "centos" ]]; then
-            if [[ -d "/etc/sysconfig" ]]; then
-                iptables-save > /etc/sysconfig/iptables
-            else
-                iptables-save > /etc/iptables.rules
-            fi
+        # 尝试使用各种方式持久化 iptables 规则
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1
+        elif command -v service >/dev/null 2>&1 && systemctl is-active iptables >/dev/null 2>&1; then
+            service iptables save >/dev/null 2>&1
         else
-            iptables-save > /etc/iptables.rules
+            mkdir -p /etc/iptables
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+            iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
         fi
+        echo -e "${SUCCESS} iptables 端口开放并尝试保存完成！"
     fi
 }
 
@@ -610,7 +638,7 @@ View() {
         local config_port=$(jq -r '.server_port' "${CONFIG_PATH}")
         local config_password=$(jq -r '.password' "${CONFIG_PATH}")
         local config_method=$(jq -r '.method' "${CONFIG_PATH}")
-        echo -e " 主IP配置查看（多IP节点请查看 /root/nodes_info.csv）"
+        echo -e " 主IP配置查看（多IP节点请查看 /root/nodes_info.txt）"
         echo -e " 端口：${config_port} | 密码：${config_password} | 加密：${config_method}"
     else
         echo -e "${Error} 单实例配置文件不存在（可能已切换为多IP模式）！"
@@ -659,12 +687,12 @@ Deploy_Multi_IP() {
     systemctl stop ss-rust >/dev/null 2>&1 || true
     systemctl disable ss-rust >/dev/null 2>&1 || true
 
-    # 2. 准备目录与模板服务
+    # 2. 准备目录与模板服务 (修复 BUG 1：去除 network-online.target 依赖)
     mkdir -p /etc/ss-rust/configs
     cat > /etc/systemd/system/ss-rust@.service << EOF
 [Unit]
 Description=Shadowsocks Rust Service for %i
-After=network-online.target
+After=network.target
 
 [Service]
 Type=simple
@@ -702,7 +730,8 @@ EOF
         *) MULTI_METHOD="aes-256-gcm" ;;
     esac
 
-    OUTPUT_FILE="/root/nodes_info.txt"
+    # (导出为 txt 格式与后缀)
+	OUTPUT_FILE="/root/nodes_info.txt"
     echo "IP/端口/加密/密码" > "$OUTPUT_FILE"
 
     PORT=$START_PORT
@@ -733,10 +762,27 @@ EOF
         ((PORT++))
     done
 
+    # 6. 批量放行本地防火墙端口范围 (修复 BUG 2)
+    local END_PORT=$((PORT-1))
+    echo -e "${INFO} 正在为多IP节点放行本地防火墙端口范围：${START_PORT}-${END_PORT}..."
+    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port=${START_PORT}-${END_PORT}/tcp >/dev/null 2>&1
+        firewall-cmd --permanent --add-port=${START_PORT}-${END_PORT}/udp >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+    elif command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
+        ufw allow ${START_PORT}:${END_PORT}/tcp >/dev/null 2>&1
+        ufw allow ${START_PORT}:${END_PORT}/udp >/dev/null 2>&1
+    elif command -v iptables >/dev/null 2>&1; then
+        iptables -I INPUT -p tcp --dport ${START_PORT}:${END_PORT} -j ACCEPT
+        iptables -I INPUT -p udp --dport ${START_PORT}:${END_PORT} -j ACCEPT
+        if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1;
+        elif command -v service >/dev/null 2>&1; then service iptables save >/dev/null 2>&1; fi
+    fi
+
     echo -e "================================================="
     echo -e "${SUCCESS} 站群多 IP 批量部署圆满完成！"
-    echo -e "${INFO} 所有 ${Green_font_prefix}几百个节点${Font_color_suffix} 的连接明细已保存至文本：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
-    echo -e "${Tip} 重要提示：请务必去云服务器安全组/防火墙中放行端口范围 [ ${START_PORT} - $((PORT-1)) ]"
+    echo -e "${INFO} 所有节点连接明细已保存至表格：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
+    echo -e "${Tip} 重要提示：请务必去【云服务器厂商网页控制台】的安全组中，放行端口范围 [ ${START_PORT} - ${END_PORT} ]"
     echo -e "================================================="
     Before_Start_Menu
 }
