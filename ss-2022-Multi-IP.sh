@@ -684,7 +684,7 @@ install_shadowtls() {
     Before_Start_Menu
 }
 
-# 批量部署站群多 IP 节点
+# 批量部署站群多 IP 节点 (随机端口版)
 Deploy_Multi_IP() {
     check_root
     if [[ ! -e ${BINARY_PATH} ]]; then
@@ -694,7 +694,7 @@ Deploy_Multi_IP() {
     fi
 
     echo -e "${Info} 开始批量部署多 IP 节点..."
-    echo -e "${Tip} 此操作将停用原有单实例，并为本机抓取到的所有 IPv4 地址生成独立配置进程！"
+    echo -e "${Tip} 此操作将为本机每个 IP 随机分配 [10000-65535] 之间的端口！"
     read -e -p "是否继续？[Y/n]: " yn
     [[ -z "${yn}" ]] && yn="y"
     if [[ ${yn} != [Yy] ]]; then
@@ -707,17 +707,17 @@ Deploy_Multi_IP() {
     systemctl stop ss-rust >/dev/null 2>&1 || true
     systemctl disable ss-rust >/dev/null 2>&1 || true
 
-    # 2. 准备目录与模板服务 (修复 BUG 1：去除 network-online.target 依赖)
+    # 2. 准备目录与模板服务
     mkdir -p /etc/ss-rust/configs
     cat > /etc/systemd/system/ss-rust@.service << EOF
 [Unit]
 Description=Shadowsocks Rust Service for %i
-After=network.target
+After=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/ss-rust -c /etc/ss-rust/configs/%i.json
+ExecStart=${BINARY_PATH} -c /etc/ss-rust/configs/%i.json
 Restart=on-failure
 RestartSec=3s
 LimitNOFILE=1048576
@@ -737,10 +737,7 @@ EOF
         return 1
     fi
 
-    # 4. 配置节点参数
-    read -e -p "请输入分配的起始端口 (默认: 10000): " START_PORT
-    [[ -z "${START_PORT}" ]] && START_PORT=10000
-
+    # 4. 配置加密方式
     echo -e "请选择全部节点的统一加密方式："
     echo -e " 1. aes-128-gcm\n 2. aes-256-gcm (默认)\n 3. chacha20-ietf-poly1305"
     read -e -p "选择: " m_choice
@@ -750,22 +747,27 @@ EOF
         *) MULTI_METHOD="aes-256-gcm" ;;
     esac
 
-    # (导出为 txt 格式与后缀)
-	OUTPUT_FILE="/root/nodes_info.txt"
+    # 5. 准备输出文件
+    OUTPUT_FILE="/root/nodes_info.txt"
     echo "IP/端口/加密/密码" > "$OUTPUT_FILE"
 
-    PORT=$START_PORT
-    echo -e "${Info} 正在生成配置并启动服务，请稍候..."
+    echo -e "${Info} 正在生成随机配置并启动服务，请稍候..."
     
-    # 5. 循环部署
+    # 6. 循环部署
     for IP in $IPS; do
+        # 生成随机端口
+        RANDOM_PORT=$(shuf -i 10000-65535 -n 1)
+        # 生成随机密码
         PASSWORD=$(head -c 100 /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 8)
         
+        # 开放防火墙
+        check_firewall "${RANDOM_PORT}" >/dev/null 2>&1
+
         cat > /etc/ss-rust/configs/${IP}.json << EOF
 {
     "server": "${IP}",
     "outbound_bind_addr": "${IP}",
-    "server_port": ${PORT},
+    "server_port": ${RANDOM_PORT},
     "password": "${PASSWORD}",
     "method": "${MULTI_METHOD}",
     "mode": "tcp_and_udp",
@@ -777,40 +779,20 @@ EOF
         systemctl enable ss-rust@${IP} >/dev/null 2>&1
         systemctl restart ss-rust@${IP} >/dev/null 2>&1
         
-        echo "${IP}/${PORT}/${MULTI_METHOD}/${PASSWORD}" >> "$OUTPUT_FILE"
-        echo -e "${SUCCESS} 已启动独立节点 -> IP: ${IP} | 端口: ${PORT}"
-        
-        ((PORT++))
+        # 写入 TXT 文件 (格式: IP/端口/加密/密码)
+        echo "${IP}/${RANDOM_PORT}/${MULTI_METHOD}/${PASSWORD}" >> "$OUTPUT_FILE"
+        echo -e "${SUCCESS} 已启动: ${IP} -> 随机端口: ${RANDOM_PORT}"
     done
 
-    # 6. 批量放行本地防火墙端口范围 (修复 BUG 2)
-    local END_PORT=$((PORT-1))
-    echo -e "${INFO} 正在为多IP节点放行本地防火墙端口范围：${START_PORT}-${END_PORT}..."
-    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port=${START_PORT}-${END_PORT}/tcp >/dev/null 2>&1
-        firewall-cmd --permanent --add-port=${START_PORT}-${END_PORT}/udp >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-    elif command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
-        ufw allow ${START_PORT}:${END_PORT}/tcp >/dev/null 2>&1
-        ufw allow ${START_PORT}:${END_PORT}/udp >/dev/null 2>&1
-    elif command -v iptables >/dev/null 2>&1; then
-        iptables -I INPUT -p tcp --dport ${START_PORT}:${END_PORT} -j ACCEPT
-        iptables -I INPUT -p udp --dport ${START_PORT}:${END_PORT} -j ACCEPT
-        if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1;
-        elif command -v service >/dev/null 2>&1; then service iptables save >/dev/null 2>&1; fi
-    fi
-
-	echo -e "================================================="
-    echo -e "${SUCCESS} 站群多 IP 批量部署圆满完成！"
-    echo -e "${INFO} 所有节点的连接明细已保存至文本：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
-    echo -e "${Tip} 重要提示：请务必去云服务器安全组/防火墙中放行端口范围 [ ${START_PORT} - $((PORT-1)) ]"
+    echo -e "================================================="
+    echo -e "${SUCCESS} 站群多 IP 随机端口部署完成！"
+    echo -e "${INFO} 节点明细已保存至：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
     echo -e "================================================="
     
-    # === 新增的输出节点信息代码 开始 ===
+    # 直接输出节点信息
     echo -e "\n${INFO} 部署生成的节点信息如下："
     cat "$OUTPUT_FILE"
     echo -e "\n================================================="
-    # === 新增的输出节点信息代码 结束 ===
     
     Before_Start_Menu
 }
