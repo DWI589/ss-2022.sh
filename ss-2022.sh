@@ -2,9 +2,6 @@
 set -e
 
 # =========================================
-# 作者: jinqians
-# 日期: 2025年3月
-# 网站：jinqians.com
 # 描述: Shadowsocks Rust 管理脚本
 # =========================================
 
@@ -165,7 +162,7 @@ get_latest_version() {
 
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m" && Yellow_font_prefix="\033[0;33m"
 Info="${Green_font_prefix}[信息]${Font_color_suffix}"
-Error="${Red_font_prefix}[错误]${Font_color_suffix}"
+错误="${Red_font_prefix}[错误]${Font_color_suffix}"
 Tip="${Yellow_font_prefix}[注意]${Font_color_suffix}"
 
 check_installed_status() {
@@ -771,7 +768,7 @@ Install() {
     
     if [[ "$?" == "0" ]]; then
         echo -e "${Success} Shadowsocks Rust 安装并启动成功！"
-        View
+        查看
         echo -e "${Info} 您可以使用 ${Green_font_prefix}ssrust${Font_color_suffix} 命令进行管理"
         Before_Start_Menu
     else
@@ -1118,7 +1115,7 @@ install_shadowtls() {
     echo -e "${Info} 开始下载 ShadowTLS 安装脚本..."
     
     # 下载 ShadowTLS 脚本
-    wget -N --no-check-certificate https://raw.githubusercontent.com/jinqians/ss-2022.sh/refs/heads/main/shadowtls.sh
+    wget -N --no-check-certificate https://raw.githubusercontent.com/DWI589/ss-2022.sh/main/shadowtls.sh
     
     if [ $? -ne 0 ]; then
         echo -e "${Error} ShadowTLS 脚本下载失败！"
@@ -1153,9 +1150,6 @@ Start_Menu() {
         action=${1:-}
     echo -e "${GREEN}============================================${RESET}"
     echo -e "${GREEN}          SS - 2022 管理脚本 ${RESET}"
-    echo -e "${GREEN}============================================${RESET}"
-    echo -e "${GREEN}            作者: jinqian${RESET}"
-    echo -e "${GREEN}       网站：https://jinqians.com${RESET}"
     echo -e "${GREEN}============================================${RESET}"
         echo && echo -e "  
  ${Green_font_prefix}0.${Font_color_suffix} 更新脚本
