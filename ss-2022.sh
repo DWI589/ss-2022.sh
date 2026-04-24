@@ -766,9 +766,9 @@ Install() {
     echo -e "${Info} 所有步骤安装完毕，开始启动服务..."
     start_service
     
-    if [[ "$?" == "0" ]]; then
+	if [[ "$?" == "0" ]]; then
         echo -e "${Success} Shadowsocks Rust 安装并启动成功！"
-        查看
+        View
         echo -e "${Info} 您可以使用 ${Green_font_prefix}ssrust${Font_color_suffix} 命令进行管理"
         Before_Start_Menu
     else
