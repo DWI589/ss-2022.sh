@@ -15,8 +15,11 @@ bash <(curl -L -s ss.jinqians.com)
 ```bash
 wget -N --no-check-certificate https://raw.githubusercontent.com/DWI589/ss-2022.sh/main/ss-2022.sh && chmod +x ss-2022.sh && ./ss-2022.sh
 
-2
+ss
 curl -Ss https://raw.githubusercontent.com/DWI589/dss/tree/main/ss.sh | sudo bash
+
+Xray 多协议多 IP 自动配置脚本:
+bash <(curl -fsSL https://raw.githubusercontent.com/DWI589/dss/main/ss2.sh)
 ```
 
 # Shadowsocks Rust + ShadowTLS 安装管理脚本
