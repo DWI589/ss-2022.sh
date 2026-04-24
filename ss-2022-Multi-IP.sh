@@ -430,7 +430,7 @@ check_firewall() {
 # 生成随机端口
 generate_random_port() {
     local min_port=10666
-    local max_port=38888
+    local max_port=58888
     echo $(shuf -i ${min_port}-${max_port} -n 1)
 }
 
@@ -607,29 +607,41 @@ Update() {
 
 # 卸载
 Uninstall() {
-    check_installed_status || return 1
-    read -e -p "确定要卸载 Shadowsocks Rust ? (y/N)：" unyn
+    read -e -p "确定要彻底卸载 Shadowsocks Rust 吗？(y/N): " unyn
     if [[ ${unyn} == [Yy] ]]; then
-        systemctl stop ss-rust >/dev/null 2>&1
-        systemctl disable ss-rust >/dev/null 2>&1
-        rm -rf "${INSTALL_DIR}" "${BINARY_PATH}" "/usr/local/bin/ssrust" "/usr/local/bin/ss-2022.sh"
-        # 同时清理多IP节点残留服务和配置
+        echo -e "${INFO} 正在清理服务..."
+        systemctl stop ss-rust >/dev/null 2>&1 || true
+        systemctl disable ss-rust >/dev/null 2>&1 || true
         systemctl stop ss-rust@* >/dev/null 2>&1 || true
-        rm -f /etc/systemd/system/ss-rust@.service
+        
+        echo -e "${INFO} 正在删除文件与配置..."
+        rm -rf "${INSTALL_DIR}"
+        rm -f "${BINARY_PATH}"
+        rm -f "/etc/systemd/system/ss-rust.service"
+        rm -f "/etc/systemd/system/ss-rust@.service"
+        rm -f "/usr/local/bin/ssrust"
+		rm -f "/root/nodes_info.txt"
+        
+        # 额外删除多IP结果文件
+        if [[ -f "$OUTPUT_FILE" ]]; then
+            rm -f "$OUTPUT_FILE"
+            echo -e "${INFO} 已删除节点信息文件: $OUTPUT_FILE"
+        fi
+        
         systemctl daemon-reload
-        echo "卸载完成！"
+        echo -e "${SUCCESS} 卸载完成，所有配置已清除。"
     fi
 }
 
 # 提取IP
 getipv4() { set +e; ipv4=$(curl -m 2 -s4 https://api.ipify.org); [[ -z "${ipv4}" ]] && ipv4="IPv4_Error"; set -e; }
-getipv6() { set +e; ipv6=$(curl -m 2 -s6 https://api64.ipify.org); [[ -z "${ipv6}" ]] && ipv6="IPv6_Error"; set -e; }
+# getipv6() { set +e; ipv6=$(curl -m 2 -s6 https://api64.ipify.org); [[ -z "${ipv6}" ]] && ipv6="IPv6_Error"; set -e; }
 
 # 查看配置信息
 View() {
     check_installed_status
     getipv4
-    getipv6
+    # getipv6
 
     echo -e " =============================="
 
@@ -681,36 +693,28 @@ install_shadowtls() {
     Before_Start_Menu
 }
 
-# 批量部署站群多 IP 节点 (随机端口版)
+# 批量部署站群多 IP 节点 (自动映射公网 IP + 随机端口版)
 Deploy_Multi_IP() {
     check_root
-    if [[ ! -e ${BINARY_PATH} ]]; then
-        echo -e "${Error} 未检测到 ss-rust 主程序，请先在主菜单选 1 随便进行一次单节点安装！"
-        Before_Start_Menu
-        return 1
-    fi
+    [[ ! -e ${BINARY_PATH} ]] && { echo -e "${Error} 未检测到主程序，请先安装！"; Before_Start_Menu; return 1; }
 
+    # 1. 确认与准备
     echo -e "${Info} 开始批量部署多 IP 节点..."
-    echo -e "${Tip} 此操作将为本机每个 IP 随机分配 [10000-65535] 之间的端口！"
+    echo -e "${Tip} 脚本将自动探测 内网->公网 IP 映射，并分配随机端口。"
     read -e -p "是否继续？[Y/n]: " yn
     [[ -z "${yn}" ]] && yn="y"
-    if [[ ${yn} != [Yy] ]]; then
-        echo "已取消。"
-        Before_Start_Menu
-        return 0
-    fi
+    [[ ${yn} != [Yy] ]] && { Before_Start_Menu; return 0; }
 
-    # 1. 停止原单实例
+    # 2. 停止旧服务
     systemctl stop ss-rust >/dev/null 2>&1 || true
     systemctl disable ss-rust >/dev/null 2>&1 || true
-
-    # 2. 准备目录与模板服务
     mkdir -p /etc/ss-rust/configs
+
+    # 3. 创建 Systemd 模板
     cat > /etc/systemd/system/ss-rust@.service << EOF
 [Unit]
 Description=Shadowsocks Rust Service for %i
 After=network-online.target
-
 [Service]
 Type=simple
 User=root
@@ -718,25 +722,20 @@ ExecStart=${BINARY_PATH} -c /etc/ss-rust/configs/%i.json
 Restart=on-failure
 RestartSec=3s
 LimitNOFILE=1048576
-
 [Install]
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
 
-    # 3. 提取所有本地 IP
-    set +e
-    IPS=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.')
-    set -e
-    if [[ -z "$IPS" ]]; then
-        echo -e "${Error} 未检测到可用的本地 IPv4 地址！"
-        Before_Start_Menu
-        return 1
+    # 4. 获取所有本地内网 IP (排除 127.0.0.1)
+    LOCAL_IPS=$(ip -4 addr | grep inet | awk '{print $2}' | cut -d/ -f1 | grep -v '^127\.')
+    
+    if [[ -z "$LOCAL_IPS" ]]; then
+        echo -e "${Error} 未检测到可用内网 IP！"; Before_Start_Menu; return 1
     fi
 
-    # 4. 配置加密方式
-    echo -e "请选择全部节点的统一加密方式："
-    echo -e " 1. aes-128-gcm\n 2. aes-256-gcm (默认)\n 3. chacha20-ietf-poly1305"
+    # 5. 设置加密方式
+    echo -e "请选择全部节点的统一加密方式：\n 1. aes-128-gcm\n 2. aes-256-gcm (默认)\n 3. chacha20-ietf-poly1305"
     read -e -p "选择: " m_choice
     case $m_choice in
         1) MULTI_METHOD="aes-128-gcm" ;;
@@ -744,22 +743,34 @@ EOF
         *) MULTI_METHOD="aes-256-gcm" ;;
     esac
 
-    # 5. 准备输出文件
+    # 6. 初始化输出文件
     OUTPUT_FILE="/root/nodes_info.txt"
-    echo "IP/端口/加密/密码" > "$OUTPUT_FILE"
+    echo "公网IP/端口/加密/密码" > "$OUTPUT_FILE"
 
-    echo -e "${Info} 正在生成随机配置并启动服务，请稍候..."
+    echo -e "${Info} 正在探测 IP 映射并启动服务 (IP 较多时请耐心等待)..."
     
-    # 6. 循环部署
-    for IP in $IPS; do
-        # 生成随机端口
-        RANDOM_PORT=$(shuf -i 10666-38888 -n 1)
-        # 生成随机密码
+    # 7. 循环处理每个 IP
+    for IP in $LOCAL_IPS; do
+        # --- 自动化精准映射核心逻辑 ---
+        # 使用 --interface 强制指定从当前内网 IP 发出请求，探测其对应的公网出口
+        PUB_IP=$(curl -s --interface "$IP" ifconfig.me --max-time 5 || true)
+        
+        # 如果该内网 IP 无法探测到公网（可能未绑定或无法出网），则跳过
+        if [[ -z "$PUB_IP" ]]; then
+            echo -e "${WARNING} 内网 IP [${IP}] 无法探测到公网出口，已跳过。"
+            continue
+        fi
+        # ----------------------------
+
+        RANDOM_PORT=$(shuf -i 10666-58888 -n 1)
         PASSWORD=$(head -c 100 /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 8)
         
-        # 开放防火墙
+        # 开放防火墙端口
         check_firewall "${RANDOM_PORT}" >/dev/null 2>&1
 
+        # 生成配置文件
+        # server 绑定内网 IP 以监听连接
+        # outbound_bind_addr 绑定内网 IP 以确保流量原路返回
         cat > /etc/ss-rust/configs/${IP}.json << EOF
 {
     "server": "${IP}",
@@ -773,24 +784,22 @@ EOF
     "timeout": 300
 }
 EOF
+        # 启动服务 (以本地 IP 作为实例 ID)
         systemctl enable ss-rust@${IP} >/dev/null 2>&1
         systemctl restart ss-rust@${IP} >/dev/null 2>&1
         
-        # 写入 TXT 文件 (格式: IP/端口/加密/密码)
-        echo "${IP}/${RANDOM_PORT}/${MULTI_METHOD}/${PASSWORD}" >> "$OUTPUT_FILE"
-        echo -e "${SUCCESS} 已启动: ${IP} -> 随机端口: ${RANDOM_PORT}"
+        # 写入 TXT 文件 (这里写入的是探测到的 PUB_IP)
+        echo "${PUB_IP}/${RANDOM_PORT}/${MULTI_METHOD}/${PASSWORD}" >> "$OUTPUT_FILE"
+        echo -e "${SUCCESS} 映射成功: 内网[${IP}] -> 公网[${PUB_IP}] 端口[${RANDOM_PORT}]"
     done
 
     echo -e "================================================="
-    echo -e "${SUCCESS} 站群多 IP 随机端口部署完成！"
-    echo -e "${INFO} 节点明细已保存至：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
+    echo -e "${SUCCESS} 批量部署完成！已自动排除无法出网的 IP。"
+    echo -e "${INFO} 节点明细(公网地址)已保存至：${Green_font_prefix}${OUTPUT_FILE}${Font_color_suffix}"
     echo -e "================================================="
-    
-    # 直接输出节点信息
     echo -e "\n${INFO} 部署生成的节点信息如下："
     cat "$OUTPUT_FILE"
     echo -e "\n================================================="
-    
     Before_Start_Menu
 }
 
