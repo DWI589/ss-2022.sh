@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #=================================================
-#	SOCKS5 自动映射版 (Xray v1.8.10) - 修复UDP路由与格式
+#	SOCKS5 自动映射版 (Xray v1.8.10) - 修复UDP路由与防火墙持久化
 #=================================================
 
 # ----------------- 1. 安装 SOCKS5 代理 -----------------
@@ -102,8 +102,19 @@ install_socks5() {
     node_count=0
 
     echo "-------------------------------------"
-    echo "正在自动探测并映射内网与公网IP关系，请稍候..."
+    echo "正在自动探测并映射内网与公网IP关系 (增强版)，请稍候..."
     
+    # 【修复】自动检测并安装 iptables 以及 Debian 持久化工具 iptables-persistent
+    if command -v yum >/dev/null 2>&1; then
+        if ! command -v iptables >/dev/null 2>&1; then
+            yum install -y iptables iptables-services >/dev/null 2>&1
+        fi
+    elif command -v apt-get >/dev/null 2>&1; then
+        # 强制安装 iptables 和 iptables-persistent (无交互模式防卡死)
+        apt-get update >/dev/null 2>&1 
+        DEBIAN_FRONTEND=noninteractive apt-get install -y iptables iptables-persistent >/dev/null 2>&1
+    fi
+
     # 获取本机所有有效 IPv4 地址
     ips=$(ip -4 addr | grep inet | awk '{print $2}' | cut -d/ -f1)
 
@@ -112,8 +123,27 @@ install_socks5() {
         # 跳过本地回环地址
         [[ $current_in_ip == "127.0.0.1" ]] && continue
 
-        # 强制使用指定内网IP出网，获取对应的公网IP
-        show_pub_ip=$(curl -s --interface "$current_in_ip" ifconfig.me --max-time 5)
+        # 定义多个探测接口，防止单一接口失效或被墙
+        pub_apis=(
+            "api.ipify.org"
+            "icanhazip.com"
+            "ident.me"
+            "ifconfig.me"
+            "ip.sb"
+        )
+
+        show_pub_ip=""
+        # 遍历 API 列表进行重试获取
+        for api in "${pub_apis[@]}"; do
+            # 增加 3 秒单次超时，清除结果中的换行符和空格
+            tmp_ip=$(curl -s --interface "$current_in_ip" "$api" --max-time 3 | tr -d '[:space:]')
+            
+            # 使用正则表达式验证返回的是否为合法的 IPv4 地址
+            if [[ "$tmp_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                show_pub_ip="$tmp_ip"
+                break # 获取成功，跳出当前 IP 的 API 探测循环
+            fi
+        done
 
         # 如果成功获取到公网IP，则生成该节点的配置
         if [[ -n "$show_pub_ip" ]]; then
@@ -192,10 +222,28 @@ EOF
             iptables -I INPUT -p tcp --dport $p -j ACCEPT
             iptables -I INPUT -p udp --dport $p -j ACCEPT
         done
+        
+        # 【修复】确保规则持久化目录存在
+        mkdir -p /etc/iptables
+        mkdir -p /etc/sysconfig
+        
         if command -v iptables-save >/dev/null 2>&1; then
-            iptables-save > /etc/iptables/rules.v4 2>/dev/null || iptables-save > /etc/sysconfig/iptables 2>/dev/null
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+            iptables-save > /etc/sysconfig/iptables 2>/dev/null
         fi
-        echo "防火墙规则已通过 iptables 配置"
+
+        # 【修复】Debian/Ubuntu 专用持久化保存命令
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1
+        fi
+
+        # 【修复】CentOS 专用持久化开机自启
+        if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q iptables.service; then
+            systemctl enable iptables >/dev/null 2>&1
+            service iptables save >/dev/null 2>&1
+        fi
+
+        echo "防火墙规则已通过 iptables 配置并持久化保存。"
     }
 
     configure_firewall
@@ -282,6 +330,16 @@ uninstall_socks5() {
         if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
             firewall-cmd --reload 2>/dev/null
         fi
+
+        # 卸载时一并清理持久化的规则文件
+        if command -v iptables-save >/dev/null 2>&1; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+            iptables-save > /etc/sysconfig/iptables 2>/dev/null
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+                netfilter-persistent save >/dev/null 2>&1
+            fi
+        fi
+
         echo "✓ 防火墙规则已清理"
     else
         echo "未找到配置文件，跳过防火墙清理"
