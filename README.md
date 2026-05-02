@@ -20,6 +20,9 @@ curl -Ss https://raw.githubusercontent.com/DWI589/dss/tree/main/ss.sh | sudo bas
 
 Xray 多协议多 IP 自动配置脚本:
 bash <(curl -fsSL https://raw.githubusercontent.com/DWI589/dss/main/ss2.sh)
+
+SSR一键脚本
+bash <(curl -sL https://storage.googleapis.com/tiziblog/ssr.sh)
 ```
 
 # Shadowsocks Rust + ShadowTLS 安装管理脚本
