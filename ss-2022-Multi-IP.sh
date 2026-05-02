@@ -474,9 +474,9 @@ set_password() {
 
 # 设置加密方式
 set_method() {
-    echo -e "请选择 Shadowsocks Rust 加密方式\n 1. aes-128-gcm\n 2. aes-256-gcm (默认)\n 3. chacha20-ietf-poly1305\n ..."
-    read -e -p "(默认: 2)：" method_choice
-    [[ -z "${method_choice}" ]] && method_choice="2"
+    echo -e "请选择 Shadowsocks Rust 加密方式\n 1. aes-128-gcm (默认)\n 2. aes-256-gcm\n 3. chacha20-ietf-poly1305\n ..."
+    read -e -p "(默认: 1)：" method_choice
+    [[ -z "${method_choice}" ]] && method_choice="1"
     case ${method_choice} in
         1) SS_METHOD="aes-128-gcm" ;;
         2) SS_METHOD="aes-256-gcm" ;;
@@ -735,7 +735,7 @@ EOF
     fi
 
     # 5. 设置加密方式
-    echo -e "请选择全部节点的统一加密方式：\n 1. aes-128-gcm\n 2. aes-256-gcm (默认)\n 3. chacha20-ietf-poly1305"
+    echo -e "请选择全部节点的统一加密方式：\n 1. aes-128-gcm (默认)\n 2. aes-256-gcm\n 3. chacha20-ietf-poly1305"
     read -e -p "选择: " m_choice
     case $m_choice in
         1) MULTI_METHOD="aes-128-gcm" ;;
